@@ -3,7 +3,7 @@ import threading
 import traceback
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import sanitize_filename
-from utils import check_ffmpeg, format_size, format_duration
+from utils import check_ffmpeg, check_js_runtime, format_size, format_duration
 
 class DownloadManager:
     def __init__(self, window=None):
@@ -20,20 +20,27 @@ class DownloadManager:
         Mengirimkan status progres ke frontend secara real-time menggunakan evaluate_js.
         """
         with self.lock:
-            if download_id in self.active_downloads and self.active_downloads[download_id].get("cancel_flag", False):
-                # Lempar Exception untuk menghentikan unduhan di yt-dlp
+            if download_id not in self.active_downloads:
+                return
+            dl = self.active_downloads[download_id]
+            if dl.get("cancel_flag", False):
                 raise Exception("Download cancelled by user")
 
-        status = data.get("status")
-        
+            status = data.get("status")
+            # Setiap kali satu stream selesai ('finished'), naikkan nomor fase
+            if status == "finished":
+                dl["phase"] = dl.get("phase", 1) + 1
+            phase = dl.get("phase", 1)
+
         payload = {
             "id": download_id,
             "status": status,
+            "phase": phase,
             "progress": 0,
-            "speed": "0 B/s",
-            "eta": "00:00",
+            "speed": "—",
+            "eta": "—",
             "downloaded": "0 B",
-            "total": "0 B",
+            "total": "—",
             "filename": os.path.basename(data.get("filename", ""))
         }
 
@@ -43,54 +50,61 @@ class DownloadManager:
             speed = data.get("speed")
             eta = data.get("eta")
 
-            if total:
-                progress = int((downloaded / total) * 100)
-                payload["progress"] = progress
+            if total and total > 0:
+                payload["progress"] = min(int((downloaded / total) * 100), 99)
                 payload["total"] = format_size(total)
-            
+
             payload["downloaded"] = format_size(downloaded)
-            
+
             if speed:
                 payload["speed"] = f"{format_size(speed)}/s"
-            
+
             if eta:
                 payload["eta"] = format_duration(eta)
 
         elif status == "finished":
-            payload["progress"] = 100
-            total = data.get("total_bytes", 0)
-            payload["downloaded"] = format_size(total)
-            payload["total"] = format_size(total)
-            payload["speed"] = "Selesai"
-            payload["eta"] = "00:00"
+            # Stream selesai — reset progress untuk fase berikutnya atau tunggu merge
+            payload["progress"] = 0
+            payload["speed"] = "—"
+            payload["eta"] = "—"
 
         # Kirim update ke frontend JS jika window terdaftar
         if self._window:
-            # Gunakan string escaping yang aman
-            js_code = f"if (window.updateDownloadProgress) {{ window.updateDownloadProgress({payload}); }}"
+            import json
+            js_code = f"if (window.updateDownloadProgress) {{ window.updateDownloadProgress({json.dumps(payload)}); }}"
             self._window.evaluate_js(js_code)
 
-    def _run_download(self, download_id, url, format_id, output_path):
+    def _run_download(self, download_id, url, format_id, output_path, subtitle_lang=None, embed_subs=True):
         """
         Dijalankan di dalam thread terpisah.
         """
         ffmpeg_info = check_ffmpeg()
-        
-        # Konfigurasi parameter yt-dlp
-        # Jika format_id = 'bestaudio', kita download audio saja dan convert ke mp3
-        # Jika format_id = 'best', kita download video terbaik (biasanya merged)
+        js_info = check_js_runtime()
+
         ydl_opts = {
             'outtmpl': os.path.join(output_path, '%(title)s.%(ext)s'),
             'progress_hooks': [lambda d: self._progress_hook(download_id, d)],
-            'js_runtimes': {'node': {'path': None}}, # Memaksa penggunaan Node.js bawaan sistem
-            'noplaylist': True,                      # Abaikan playlist saat pengunduhan video tunggal
+            'noplaylist': True,  # Abaikan playlist saat pengunduhan video tunggal
         }
+        if js_info["available"]:
+            ydl_opts['js_runtimes'] = {js_info["runtime_key"]: {'path': js_info["path"]}}
 
         # Tambahkan path FFmpeg jika tersedia
         if ffmpeg_info["available"]:
             # ffmpeg_location menerima path ke folder biner
             ydl_opts['ffmpeg_location'] = os.path.dirname(ffmpeg_info["ffmpeg_path"])
         
+        # Subtitle options (only for video formats, not audio-only)
+        if subtitle_lang and format_id != 'bestaudio':
+            ydl_opts['writesubtitles'] = True
+            ydl_opts['writeautomaticsub'] = True
+            ydl_opts['subtitleslangs'] = [subtitle_lang]
+            ydl_opts['subtitlesformat'] = 'srt/vtt/best'
+            if embed_subs and ffmpeg_info["available"]:
+                ydl_opts.setdefault('postprocessors', []).append(
+                    {'key': 'FFmpegEmbedSubtitle', 'already_have_subtitle': False}
+                )
+
         # Tentukan opsi format
         if format_id == "bestaudio":
             ydl_opts.update({
@@ -119,6 +133,12 @@ class DownloadManager:
                 with self.lock:
                     if download_id in self.active_downloads:
                         self.active_downloads[download_id]["title"] = title
+
+                # Informasikan frontend judul video sudah diketahui
+                if self._window:
+                    safe_title = title.replace("\\", "\\\\").replace("'", "\\'").replace("\n", " ").replace("\r", "")
+                    js_code = f"if (window.onDownloadStarted) {{ window.onDownloadStarted('{download_id}', '{safe_title}'); }}"
+                    self._window.evaluate_js(js_code)
 
                 # Jalankan unduhan sebenarnya
                 ydl.download([url])
@@ -156,13 +176,13 @@ class DownloadManager:
                 if download_id in self.active_downloads:
                     self.active_downloads[download_id]["running"] = False
 
-    def start_download(self, download_id, url, format_id, output_path):
+    def start_download(self, download_id, url, format_id, output_path, subtitle_lang=None, embed_subs=True):
         """
         Memulai thread unduhan baru.
         """
         thread = threading.Thread(
             target=self._run_download,
-            args=(download_id, url, format_id, output_path),
+            args=(download_id, url, format_id, output_path, subtitle_lang, embed_subs),
             daemon=True
         )
         
@@ -172,9 +192,10 @@ class DownloadManager:
                 "status": "starting",
                 "running": True,
                 "cancel_flag": False,
+                "phase": 1,
                 "url": url,
                 "format_id": format_id,
-                "title": "Mengambil info video..."
+                "title": "Fetching video info..."
             }
         
         thread.start()

@@ -15,8 +15,9 @@ export interface PyApiInterface {
         duration?: string;
         uploader?: string;
         formats?: Array<{ id: string; label: string; ext: string; size: string }>;
+        subtitles?: Array<{ code: string; name: string; auto: boolean }>;
     }>;
-    start_download: (url: string, formatId: string, outputPath: string) => Promise<{
+    start_download: (url: string, formatId: string, outputPath: string, subtitleLang?: string | null, embedSubs?: boolean) => Promise<{
         success: boolean;
         download_id?: string;
         error?: string;
@@ -34,6 +35,24 @@ export interface PyApiInterface {
     open_folder: (folderPath: string) => Promise<{ success: boolean; error?: string }>;
     play_video: (folderPath: string, filename: string) => Promise<{ success: boolean; error?: string }>;
     delete_history_item: (index: number, deleteFile: boolean) => Promise<{ success: boolean; error?: string }>;
+    check_for_update: () => Promise<{
+        success: boolean;
+        has_update: boolean;
+        current_version?: string;
+        latest_version?: string;
+        release_name?: string;
+        release_url?: string;
+        error?: string;
+    }>;
+    open_url: (url: string) => Promise<{ success: boolean; error?: string }>;
+    get_playlist_info: (url: string) => Promise<{
+        success: boolean;
+        error?: string;
+        title?: string;
+        uploader?: string;
+        count?: number;
+        entries?: Array<{ index: number; id: string; title: string; url: string; duration: string }>;
+    }>;
 }
 
 export function usePyApi() {

@@ -1,5 +1,4 @@
 import os
-import sys
 import shutil
 import PyInstaller.__main__
 
@@ -29,7 +28,11 @@ def build():
         f"--name=yt-dlp",                       # Nama produk
         f"--paths={base_dir}",                  # Tambahkan path root proyek agar modul lokal yt_dlp ditemukan
         f"--add-data={frontend_src}{separator}gui/frontend", # Sertakan folder frontend
+        f"--icon={os.path.join(base_dir, 'fetchr.ico')}",   # Icon aplikasi
+        "--hidden-import=pystray._win32",       # Backend pystray Windows
+        "--hidden-import=PIL._tkinter_finder",  # Pillow
         "--clean",                              # Bersihkan cache sebelum build
+        "--noconfirm",                          # Timpa folder dist tanpa konfirmasi
         f"--workpath={os.path.join(base_dir, 'build')}",
         f"--distpath={os.path.join(base_dir, 'dist')}",
     ]
@@ -38,25 +41,24 @@ def build():
     PyInstaller.__main__.run(args)
     print("Build PyInstaller selesai.")
     
-    # Menyalin biner FFmpeg portabel (jika ada) ke folder hasil build
+    # Menyalin semua biner dari gui/bin ke folder hasil build
+    # (ffmpeg.exe, ffprobe.exe, qjs.exe, dst — semua .exe di folder bin)
     bin_src = os.path.join(gui_dir, "bin")
     bin_dest = os.path.join(base_dir, "dist", "yt-dlp", "gui", "bin")
-    
+
     if os.path.exists(bin_src):
-        ffmpeg_file = os.path.join(bin_src, "ffmpeg.exe")
-        ffprobe_file = os.path.join(bin_src, "ffprobe.exe")
-        
-        if os.path.exists(ffmpeg_file) and os.path.exists(ffprobe_file):
-            print("Menyalin biner FFmpeg portabel ke direktori dist...")
+        exe_files = [f for f in os.listdir(bin_src) if f.lower().endswith(".exe")]
+        if exe_files:
             if not os.path.exists(bin_dest):
                 os.makedirs(bin_dest)
-            shutil.copy2(ffmpeg_file, os.path.join(bin_dest, "ffmpeg.exe"))
-            shutil.copy2(ffprobe_file, os.path.join(bin_dest, "ffprobe.exe"))
-            print("FFmpeg portabel berhasil disalin ke dist.")
+            for exe in exe_files:
+                shutil.copy2(os.path.join(bin_src, exe), os.path.join(bin_dest, exe))
+                print(f"  Disalin: {exe}")
+            print(f"Semua biner dari gui/bin ({len(exe_files)} file) berhasil disalin ke dist.")
         else:
-            print("Peringatan: Biner ffmpeg.exe atau ffprobe.exe tidak ditemukan di gui/bin. Folder rilis tidak akan menyertakan FFmpeg.")
+            print("Peringatan: Tidak ada file .exe di gui/bin.")
     else:
-        print("Peringatan: Folder gui/bin tidak ditemukan. FFmpeg tidak disertakan.")
+        print("Peringatan: Folder gui/bin tidak ditemukan. Biner tidak disertakan.")
 
 if __name__ == "__main__":
     build()

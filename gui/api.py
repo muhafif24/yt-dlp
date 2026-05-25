@@ -1,11 +1,16 @@
 import os
 import json
 import uuid
+import urllib.request
+import webbrowser
 import webview
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import sanitize_filename
 from utils import check_ffmpeg, check_js_runtime, get_app_data_dir, format_size, format_duration
 from downloader import DownloadManager
+
+APP_VERSION = "1.2.0"
+GITHUB_REPO  = "muhafif24/yt-dlp"
 
 class Api:
     def __init__(self):
@@ -62,6 +67,53 @@ class Api:
             return result[0]
         return None
 
+    def get_playlist_info(self, url):
+        """
+        Mengekstrak daftar video dari URL playlist (flat extraction — cepat, tanpa download).
+        """
+        if not url:
+            return {"success": False, "error": "URL tidak boleh kosong."}
+
+        js_info = check_js_runtime()
+        ffmpeg_info = check_ffmpeg()
+
+        ydl_opts = {
+            'extract_flat': True,
+            'quiet': True,
+            'noplaylist': False,
+        }
+        if js_info["available"]:
+            ydl_opts['js_runtimes'] = {js_info["runtime_key"]: {'path': js_info["path"]}}
+        if ffmpeg_info["available"]:
+            ydl_opts['ffmpeg_location'] = os.path.dirname(ffmpeg_info["ffmpeg_path"])
+
+        try:
+            with YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+
+            if info.get('_type') != 'playlist':
+                return {"success": False, "error": "URL bukan playlist yang valid."}
+
+            entries = [e for e in (info.get('entries') or []) if e]
+            return {
+                "success": True,
+                "title": info.get('title', 'Playlist'),
+                "uploader": info.get('uploader') or info.get('channel', ''),
+                "count": len(entries),
+                "entries": [
+                    {
+                        "index": i + 1,
+                        "id": e.get('id', ''),
+                        "title": e.get('title') or f"Video {i + 1}",
+                        "url": e.get('url') or e.get('webpage_url') or f"https://www.youtube.com/watch?v={e.get('id','')}",
+                        "duration": format_duration(e.get('duration') or 0),
+                    }
+                    for i, e in enumerate(entries)
+                ],
+            }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
     def get_video_info(self, url):
         """
         Mengekstrak metadata video (judul, thumbnail, format yang tersedia).
@@ -71,11 +123,13 @@ class Api:
 
         # Cek status dependensi
         ffmpeg_info = check_ffmpeg()
+        js_info = check_js_runtime()
 
         ydl_opts = {
-            'js_runtimes': {'node': {'path': None}}, # Memaksa penggunaan Node.js
-            'noplaylist': True,                      # Abaikan playlist untuk kecepatan analisis video tunggal
+            'noplaylist': True,  # Abaikan playlist untuk kecepatan analisis video tunggal
         }
+        if js_info["available"]:
+            ydl_opts['js_runtimes'] = {js_info["runtime_key"]: {'path': js_info["path"]}}
         if ffmpeg_info["available"]:
             ydl_opts['ffmpeg_location'] = os.path.dirname(ffmpeg_info["ffmpeg_path"])
 
@@ -106,8 +160,15 @@ class Api:
                 raw_formats = info.get("formats", [])
                 
                 # Kita saring beberapa opsi resolusi populer (1080p, 720p, 480p, 360p)
+                _res_labels = {
+                    2160: "4K Ultra HD (2160p)",
+                    1440: "2K QHD (1440p)",
+                    1080: "1080p Full HD",
+                    720:  "720p HD",
+                    480:  "480p",
+                    360:  "360p",
+                }
                 seen_heights = set()
-                # Sortir format berdasarkan tinggi resolusi menurun
                 sorted_formats = sorted(
                     [f for f in raw_formats if f.get('height') and f.get('vcodec') != 'none'],
                     key=lambda x: x.get('height', 0),
@@ -116,21 +177,42 @@ class Api:
 
                 for f in sorted_formats:
                     height = f.get('height')
-                    # Kita hanya ambil satu entri terbaik untuk setiap resolusi standar
-                    if height in [1080, 720, 480, 360]:
-                        if height not in seen_heights:
-                            seen_heights.add(height)
-                            
-                            # Cek estimasi ukuran file
-                            filesize = f.get('filesize') or f.get('filesize_approx')
-                            size_str = format_size(filesize) if filesize else "Estimasi tidak tersedia"
-                            
-                            formats.append({
-                                "id": f.get('format_id'),
-                                "label": f"{height}p HD (Video + Audio)",
-                                "ext": f.get('ext', 'mp4'),
-                                "size": size_str
-                            })
+                    if height in _res_labels and height not in seen_heights:
+                        seen_heights.add(height)
+                        filesize = f.get('filesize') or f.get('filesize_approx')
+                        size_str = format_size(filesize) if filesize else "Size unknown"
+                        formats.append({
+                            "id": f.get('format_id'),
+                            "label": f"{_res_labels[height]} (Video + Audio)",
+                            "ext": f.get('ext', 'mp4'),
+                            "size": size_str
+                        })
+
+                # Extract available subtitle languages
+                _lang_names = {
+                    'en': 'English', 'id': 'Indonesian', 'ja': 'Japanese',
+                    'ko': 'Korean', 'zh-Hans': 'Chinese (Simplified)',
+                    'zh-Hant': 'Chinese (Traditional)', 'zh': 'Chinese',
+                    'es': 'Spanish', 'fr': 'French', 'de': 'German',
+                    'pt': 'Portuguese', 'ru': 'Russian', 'ar': 'Arabic',
+                    'hi': 'Hindi', 'th': 'Thai', 'vi': 'Vietnamese',
+                    'ms': 'Malay', 'it': 'Italian', 'nl': 'Dutch',
+                    'tr': 'Turkish', 'pl': 'Polish', 'uk': 'Ukrainian',
+                }
+                subtitles = []
+                seen_codes = set()
+                for code, _ in (info.get('subtitles') or {}).items():
+                    if code == 'live_chat':
+                        continue
+                    name = _lang_names.get(code, code.upper())
+                    subtitles.append({'code': code, 'name': name, 'auto': False})
+                    seen_codes.add(code)
+                for code, _ in (info.get('automatic_captions') or {}).items():
+                    if code in seen_codes or code == 'live_chat':
+                        continue
+                    name = _lang_names.get(code, code.upper())
+                    subtitles.append({'code': code, 'name': f'{name} (auto)', 'auto': True})
+                    seen_codes.add(code)
 
                 return {
                     "success": True,
@@ -138,12 +220,13 @@ class Api:
                     "thumbnail": info.get("thumbnail", ""),
                     "duration": format_duration(info.get("duration", 0)),
                     "uploader": info.get("uploader", "Unknown"),
-                    "formats": formats
+                    "formats": formats,
+                    "subtitles": subtitles,
                 }
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    def start_download(self, url, format_id, output_path):
+    def start_download(self, url, format_id, output_path, subtitle_lang=None, embed_subs=True):
         """
         Memulai proses pengunduhan.
         """
@@ -157,9 +240,9 @@ class Api:
                 return {"success": False, "error": f"Gagal membuat folder output: {str(e)}"}
 
         download_id = str(uuid.uuid4())
-        
+
         # Mulai pengunduhan asinkron
-        success = self._downloader.start_download(download_id, url, format_id, output_path)
+        success = self._downloader.start_download(download_id, url, format_id, output_path, subtitle_lang, embed_subs)
         
         if success:
             return {"success": True, "download_id": download_id}
@@ -325,6 +408,52 @@ class Api:
             
         try:
             os.startfile(os.path.normpath(file_path))
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def check_for_update(self):
+        """
+        Cek versi terbaru dari GitHub Releases API.
+        Mengembalikan info update jika tersedia.
+        """
+        try:
+            api_url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+            req = urllib.request.Request(api_url, headers={"User-Agent": f"Fetchr/{APP_VERSION}"})
+            with urllib.request.urlopen(req, timeout=6) as resp:
+                data = json.loads(resp.read().decode())
+
+            latest_tag = data.get("tag_name", "").lstrip("vV")
+            if not latest_tag:
+                return {"success": False, "has_update": False, "error": "No release tag found."}
+
+            def _parse(v):
+                parts = []
+                for x in v.split("."):
+                    try:
+                        parts.append(int(x))
+                    except ValueError:
+                        parts.append(0)
+                return tuple(parts)
+
+            has_update = _parse(latest_tag) > _parse(APP_VERSION)
+            return {
+                "success": True,
+                "has_update": has_update,
+                "current_version": APP_VERSION,
+                "latest_version": latest_tag,
+                "release_name": data.get("name") or f"v{latest_tag}",
+                "release_url": data.get("html_url", ""),
+            }
+        except Exception as e:
+            return {"success": False, "has_update": False, "error": str(e)}
+
+    def open_url(self, url):
+        """
+        Buka URL di browser default sistem.
+        """
+        try:
+            webbrowser.open(url)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}

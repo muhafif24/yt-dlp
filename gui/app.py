@@ -1,5 +1,6 @@
 import os
 import sys
+import threading
 
 # Tambahkan direktori root proyek dan folder gui ke sys.path agar impor lokal dapat diselesaikan dengan benar
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -7,46 +8,64 @@ sys.path.insert(0, current_dir)
 sys.path.insert(0, os.path.dirname(current_dir))
 
 import webview
+import pystray
+from PIL import Image
 from api import Api
 from utils import get_resource_path
 
-def on_closed():
-    """
-    Callback saat jendela aplikasi ditutup.
-    Mematikan proses latar belakang secara paksa jika ada unduhan aktif.
-    """
-    print("Aplikasi ditutup. Menghentikan semua proses...")
-    # Paksa keluar untuk menghentikan daemon thread downloader
-    os._exit(0)
+
+def _load_tray_image(icon_path):
+    """Load tray icon image, fallback to a plain violet square if not found."""
+    try:
+        img = Image.open(icon_path).convert("RGBA")
+        img = img.resize((64, 64), Image.LANCZOS)
+        return img
+    except Exception:
+        img = Image.new("RGBA", (64, 64), (124, 58, 237, 255))
+        return img
+
+
+def _create_tray(window, icon_path):
+    """Build and return a pystray Icon instance (not yet running)."""
+    image = _load_tray_image(icon_path)
+
+    def on_show(icon, item):
+        window.show()
+
+    def on_quit(icon, item):
+        icon.stop()
+        os._exit(0)
+
+    menu = pystray.Menu(
+        pystray.MenuItem("Show Fetchr", on_show, default=True),
+        pystray.MenuItem("Quit", on_quit),
+    )
+
+    return pystray.Icon("fetchr", image, "Fetchr", menu)
+
 
 def main():
     # Inisialisasi API bridge
     api = Api()
-    
+
     # Mode pengembangan: Set True untuk memuat live dev server Vite (HMR)
     # Set False saat membangun versi rilis production
     DEV_MODE = False
-    
+
     if DEV_MODE:
-        url_target = "http://localhost:5173"
+        url_target = "http://localhost:5175"
         print(f"Memuat antarmuka pengembangan (Vite HMR) dari: {url_target}")
     else:
-        # Path ke file HTML frontend hasil build
         url_target = get_resource_path("gui/frontend/index.html")
-        
-        # Verifikasi file HTML ada
         if not os.path.exists(url_target):
             print(f"Error: File HTML tidak ditemukan di {url_target}")
-            # Gunakan fallback jika dijalankan langsung dari folder gui/
             url_target = os.path.abspath(os.path.join(os.path.dirname(__file__), "frontend", "index.html"))
             if not os.path.exists(url_target):
                 sys.exit(f"Fatal Error: Antarmuka HTML tidak ditemukan di {url_target}!")
         print(f"Memuat antarmuka produksi statis dari: {url_target}")
 
-    # Buat jendela PyWebview
-    # Lebar: 1020, Tinggi: 720, tidak bisa di-resize di bawah batas minimum agar UI tetap rapi
     window = webview.create_window(
-        title="yt-dlp GUI",
+        title="Fetchr",
         url=url_target,
         js_api=api,
         width=1020,
@@ -54,16 +73,27 @@ def main():
         min_size=(800, 600),
         background_color='#080b11'
     )
-    
-    # Hubungkan window ke API agar API bisa memicu evaluate_js
-    api.set_window(window)
-    
-    # Daftarkan callback penutupan
-    window.events.closed += on_closed
 
-    # Jalankan GUI loop (menggunakan engine rendering Chromium Edge WebView2 di Windows)
-    # debug=True memungkinkan inspeksi elemen (klik kanan -> inspect) saat masa pengembangan
-    webview.start(debug=True)
+    api.set_window(window)
+
+    # Tutup tombol X → sembunyikan ke tray, bukan keluar
+    def on_closing():
+        window.hide()
+        return False  # batalkan penutupan default
+
+    window.events.closing += on_closing
+
+    # Siapkan tray icon
+    icon_path = get_resource_path("fetchr.ico")
+    tray = _create_tray(window, icon_path)
+
+    # Jalankan tray di thread terpisah agar tidak memblokir webview
+    tray_thread = threading.Thread(target=tray.run, daemon=True)
+    tray_thread.start()
+
+    # Jalankan GUI loop (blocking sampai os._exit dipanggil dari tray)
+    webview.start(debug=DEV_MODE)
+
 
 if __name__ == "__main__":
     main()
