@@ -27,6 +27,7 @@ def build():
         "--onedir",                             # Mode folder (one-directory)
         "--noconsole",                          # Jangan tampilkan window hitam console
         f"--name=yt-dlp",                       # Nama produk
+        f"--paths={base_dir}",                  # Tambahkan path root proyek agar modul lokal yt_dlp ditemukan
         f"--add-data={frontend_src}{separator}gui/frontend", # Sertakan folder frontend
         "--clean",                              # Bersihkan cache sebelum build
         f"--workpath={os.path.join(base_dir, 'build')}",
