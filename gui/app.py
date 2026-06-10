@@ -48,9 +48,8 @@ def main():
     # Inisialisasi API bridge
     api = Api()
 
-    # Mode pengembangan: Set True untuk memuat live dev server Vite (HMR)
-    # Set False saat membangun versi rilis production
-    DEV_MODE = False
+    # Mode pengembangan: set env var FETCHR_DEV=1 untuk memuat live dev server Vite (HMR)
+    DEV_MODE = os.environ.get("FETCHR_DEV", "0") == "1"
 
     if DEV_MODE:
         url_target = "http://localhost:5175"

@@ -1,4 +1,5 @@
 import os
+import json
 import threading
 import traceback
 from yt_dlp import YoutubeDL
@@ -70,7 +71,6 @@ class DownloadManager:
 
         # Kirim update ke frontend JS jika window terdaftar
         if self._window:
-            import json
             js_code = f"if (window.updateDownloadProgress) {{ window.updateDownloadProgress({json.dumps(payload)}); }}"
             self._window.evaluate_js(js_code)
 
@@ -136,19 +136,17 @@ class DownloadManager:
 
                 # Informasikan frontend judul video sudah diketahui
                 if self._window:
-                    safe_title = title.replace("\\", "\\\\").replace("'", "\\'").replace("\n", " ").replace("\r", "")
-                    js_code = f"if (window.onDownloadStarted) {{ window.onDownloadStarted('{download_id}', '{safe_title}'); }}"
+                    js_code = f"if (window.onDownloadStarted) {{ window.onDownloadStarted({json.dumps(download_id)}, {json.dumps(title)}); }}"
                     self._window.evaluate_js(js_code)
 
                 # Jalankan unduhan sebenarnya
                 ydl.download([url])
 
-             # Informasikan frontend bahwa unduhan selesai penuh (termasuk post-processing)
+            # Informasikan frontend bahwa unduhan selesai penuh (termasuk post-processing)
             if self._window:
                 sanitized_title = sanitize_filename(title)
                 filename = f"{sanitized_title}.mp3" if format_id == "bestaudio" else f"{sanitized_title}.{ext}"
-                safe_filename = filename.replace("'", "\\'")
-                js_code = f"if (window.onDownloadComplete) {{ window.onDownloadComplete('{download_id}', '{safe_filename}'); }}"
+                js_code = f"if (window.onDownloadComplete) {{ window.onDownloadComplete({json.dumps(download_id)}, {json.dumps(filename)}); }}"
                 self._window.evaluate_js(js_code)
 
         except Exception as e:
@@ -167,8 +165,7 @@ class DownloadManager:
                     self.active_downloads[download_id]["error"] = friendly_err
 
             if self._window:
-                safe_friendly_err = friendly_err.replace("'", "\\'")
-                js_code = f"if (window.onDownloadError) {{ window.onDownloadError('{download_id}', '{safe_friendly_err}'); }}"
+                js_code = f"if (window.onDownloadError) {{ window.onDownloadError({json.dumps(download_id)}, {json.dumps(friendly_err)}); }}"
                 self._window.evaluate_js(js_code)
 
         finally:
