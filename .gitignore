@@ -139,12 +139,5 @@ yt_dlp_ejs/
 gui/frontend_react/screenshot*.mjs
 gui/frontend_react/screenshots/
 
-# Local planning docs
-docs/roadmap.md
-docs/ffmpeg-on-demand.md
-docs/settings-page.md
-docs/windows-notification.md
-docs/resume-download.md
-docs/progress-detail.md
-docs/browser-extension.md
-docs/update-system.md
+# Local-only docs (tidak di-push ke GitHub)
+docs-local/
