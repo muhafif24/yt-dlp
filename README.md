@@ -1,3 +1,34 @@
+# Fetchr — Desktop GUI for yt-dlp
+
+**Fetchr** adalah aplikasi desktop Windows yang memberikan antarmuka grafis modern untuk yt-dlp. Dibangun dengan PyWebview + React 19 + Tailwind CSS v4.
+
+> **Disclaimer:** Fetchr adalah tool bantu untuk mengunduh konten media. Gunakan hanya untuk konten yang kamu miliki haknya, konten bebas hak cipta (Creative Commons), atau konten yang secara eksplisit mengizinkan pengunduhan. Pengguna bertanggung jawab penuh atas kepatuhan terhadap Terms of Service platform (YouTube, dll.) dan hukum hak cipta yang berlaku di negara masing-masing. Developer tidak bertanggung jawab atas penyalahgunaan tool ini.
+
+## Fetchr — Quick Start
+
+**Requirements:** Windows 10/11 dengan Microsoft Edge (WebView2) terinstall.
+
+```bash
+# Clone repo
+git clone https://github.com/muhafif24/yt-dlp.git
+cd yt-dlp
+
+# Install Python deps
+pip install pywebview pystray pillow
+
+# Jalankan dev mode
+$env:FETCHR_DEV="1"
+python gui/app.py
+```
+
+**Build installer:**
+```bash
+cd gui/frontend_react && npm install && npm run build
+cd ../.. && python gui/build_gui.py
+```
+
+---
+
 <!-- MANPAGE: BEGIN EXCLUDED SECTION -->
 <div align="center">
 

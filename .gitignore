@@ -135,3 +135,6 @@ yt_dlp_ejs/
 
 
 .claude
+# Dev tools
+gui/frontend_react/screenshot*.mjs
+gui/frontend_react/screenshots/
